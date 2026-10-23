@@ -48,7 +48,7 @@ browse without typing anything. Typing in the field and pressing `Enter` goes
 back to searching.
 
 In the UI: `↑↓` navigate, `space` mark, `d` download (the marked ones or the
-current one), `p` switch platform, `n`/`b` page, `ctrl+b` options palette,
+current one), `c` copy the current download URL to the clipboard, `p` switch platform, `n`/`b` page, `ctrl+b` options palette,
 `ctrl+a` select all, `ctrl+n` clear, `q` quit.
 
 | Flag | Description |

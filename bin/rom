@@ -1044,7 +1044,7 @@ def fix_magic_ext(path):
     return path
 
 
-def download(result, outdir, on_progress=None):
+def resolve_url(result, on_progress=None):
     if on_progress:
         on_progress(0, 0, f"looking for: {result.title[:45]}…")
     if result.meta.get("search_title"):
@@ -1052,10 +1052,34 @@ def download(result, outdir, on_progress=None):
         if not found:
             raise RuntimeError(f"could not find '{result.title}' on dlpsgame")
         result = found[0]
-    src = SOURCES[result.source]
     if on_progress:
         on_progress(0, 0, f"getting link: {result.title[:45]}…")
-    url, name = src.resolve(result)
+    url, name = SOURCES[result.source].resolve(result)
+    return result, url, name
+
+
+def copy_clipboard(text):
+    """Copy via the native tool: pbcopy (macOS), wl-copy (Wayland), xclip/xsel (X11)."""
+    import shutil
+    import subprocess
+    tools = [["pbcopy"]]
+    if os.environ.get("WAYLAND_DISPLAY"):
+        tools.append(["wl-copy"])
+    tools += [["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]]
+    for t in tools:
+        if not shutil.which(t[0]):
+            continue
+        try:
+            if subprocess.run(t, input=text.encode(), timeout=5,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+                return True
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return False
+
+
+def download(result, outdir, on_progress=None):
+    result, url, name = resolve_url(result, on_progress)
     ext = ext_for(result, name, url)
     folder = os.path.join(outdir, re.sub(r'[\\/:*?"<>|]', "", result.platform or "outros"))
     os.makedirs(folder, exist_ok=True)
@@ -1400,6 +1424,7 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
         BINDINGS = [
             ("q", "quit", "Quit"),
             ("d", "download", "Download"),
+            ("c", "copy_url", "Copy URL"),
             ("space", "toggle", "Select"),
             ("p", "platform", "Platform"),
             ("n", "next_page", "Page+"),
@@ -1611,6 +1636,7 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                 OptionsScreen([
                     ("Download selected", "sel"),
                     ("Download current", "cur"),
+                    ("Copy current URL", "url"),
                     ("Browse this platform", "browse"),
                     ("Switch platform", "plat"),
                     ("Select all", "all"),
@@ -1626,6 +1652,8 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                 self._batch([self.results[i] for i in sorted(self.selected)])
             elif choice == "cur":
                 self.action_download()
+            elif choice == "url":
+                self.action_copy_url()
             elif choice == "browse":
                 if self.pk:
                     self._start_browse(self.pk)
@@ -1650,6 +1678,27 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             if table.cursor_row is None or not self.results:
                 return
             self._batch([self.results[table.cursor_row]])
+
+        def action_copy_url(self):
+            table = self.query_one(DataTable)
+            if table.cursor_row is None or not self.results:
+                return
+            r = self.results[table.cursor_row]
+            self._set_status(f"getting link: {r.title[:45]}…")
+            threading.Thread(target=self._copy_url_bg, args=(r,), daemon=True).start()
+
+        def _copy_url_bg(self, r):
+            try:
+                _, url, _ = resolve_url(r)
+            except Exception as e:
+                self.call_from_thread(self._set_status, f"✖ {r.title[:40]}: {e}")
+                return
+            self.call_from_thread(self._copy, url)
+
+        def _copy(self, url):
+            if not copy_clipboard(url):
+                self.copy_to_clipboard(url)  # OSC 52 fallback, needs terminal support
+            self._set_status(f"✔ copied: {url}")
 
         def _batch(self, rows):
             if not rows:
