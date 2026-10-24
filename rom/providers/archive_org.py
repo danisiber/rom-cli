@@ -18,20 +18,26 @@ class ArchiveOrg(BaseProvider):
     name = "archive.org"
     base = "https://archive.org"
     tags = {
-        "nes": ("NES", ["nes", "zip"]), "snes": ("SNES", ["sfc", "smc", "zip"]),
-        "n64": ("Nintendo 64", ["z64", "n64", "v64", "zip"]),
-        "gb": ("Game Boy", ["gb", "zip"]), "gbc": ("Game Boy Color", ["gbc", "zip"]),
-        "gba": ("Game Boy Advance", ["gba", "zip"]), "nds": ("Nintendo DS", ["nds", "zip"]),
-        "3ds": ("Nintendo 3DS", ["cia", "3ds", "zip"]),
-        "gc": ("GameCube", ["iso", "gcm", "zip"]), "wii": ("Wii", ["iso", "wbfs", "zip"]),
-        "ps1": ("PlayStation", ["bin", "cue", "iso", "zip"]),
-        "ps2": ("PlayStation 2", ["iso", "zip"]), "ps3": ("PlayStation 3", ["iso", "pkg", "zip"]),
-        "psp": ("PlayStation Portable", ["iso", "cso", "pbp", "zip"]),
-        "genesis": ("Genesis", ["md", "bin", "gen", "zip"]),
-        "mastersystem": ("Master System", ["sms", "zip"]),
-        "dreamcast": ("Dreamcast", ["cdi", "gdi", "chd", "zip"]),
-        "saturn": ("Saturn", ["cue", "bin", "chd", "zip"]), "arcade": ("Arcade", ["zip"]),
-        "xbox": ("Xbox", ["iso", "xbe", "zip", "7z"]),
+        "nes": ("NES", ["nes", "zip", "7z"]),
+        "snes": ("SNES", ["sfc", "smc", "zip", "7z"]),
+        "n64": ("Nintendo 64", ["z64", "n64", "v64", "zip", "7z"]),
+        "gb": ("Game Boy", ["gb", "zip", "7z"]),
+        "gbc": ("Game Boy Color", ["gbc", "zip", "7z"]),
+        "gba": ("Game Boy Advance", ["gba", "zip", "7z"]),
+        "nds": ("Nintendo DS", ["nds", "zip", "7z", "rar"]),
+        "3ds": ("Nintendo 3DS", ["cia", "3ds", "zip", "7z", "rar"]),
+        "gc": ("GameCube", ["iso", "gcm", "rvz", "zip", "7z", "rar"]),
+        "wii": ("Wii", ["iso", "wbfs", "rvz", "zip", "7z", "rar"]),
+        "ps1": ("PlayStation", ["bin", "cue", "iso", "chd", "zip", "7z", "rar"]),
+        "ps2": ("PlayStation 2", ["iso", "zip", "7z", "rar", "chd", "cso", "bin", "gz"]),
+        "ps3": ("PlayStation 3", ["iso", "pkg", "zip", "7z", "rar"]),
+        "psp": ("PlayStation Portable", ["iso", "cso", "pbp", "zip", "7z", "rar"]),
+        "genesis": ("Genesis", ["md", "bin", "gen", "zip", "7z"]),
+        "mastersystem": ("Master System", ["sms", "zip", "7z"]),
+        "dreamcast": ("Dreamcast", ["cdi", "gdi", "chd", "zip", "7z"]),
+        "saturn": ("Saturn", ["cue", "bin", "chd", "zip", "7z"]),
+        "arcade": ("Arcade", ["zip", "7z", "chd"]),
+        "xbox": ("Xbox", ["iso", "xbe", "zip", "7z", "rar"]),
     }
     skip = ("_files.xml", "_meta.xml", "_meta.sqlite", "_archive.torrent", ".torrent")
     port_queries = (
@@ -129,7 +135,7 @@ class ArchiveOrg(BaseProvider):
         if platform_key not in self.tags:
             return []
         tag, exts = self.tags[platform_key]
-        q = f'title:({query}) AND mediatype:software AND ({tag})'
+        q = f'({query}) AND mediatype:software AND ("{tag}" OR "{platform_key}")'
         url = (f"{self.base}/advancedsearch.php?q={urllib.parse.quote(q)}"
                "&fl%5B%5D=identifier&fl%5B%5D=title&rows=20&page=1&output=json")
         st, _, body = request(url, retries=2)

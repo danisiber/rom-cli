@@ -142,7 +142,7 @@ def download(result, outdir, on_progress=None):
             os.remove(path)
         except OSError:
             pass
-        raise RuntimeError("invalid file (expired link?)")
+        raise RuntimeError("invalid or incomplete file (corrupted or truncated upstream archive)")
     return path
 
 

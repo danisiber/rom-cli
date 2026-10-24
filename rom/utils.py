@@ -3,6 +3,7 @@
 import html as htmllib
 import os
 import re
+import struct
 import sys
 import unicodedata
 import urllib.parse
@@ -167,26 +168,121 @@ def unique_path(path):
     return path
 
 
+def safe_replace(src, dst, max_retries=10, delay=0.15):
+    """Safely replace src with dst, retrying on transient Windows file locking/sharing violations."""
+    for attempt in range(max_retries):
+        try:
+            os.replace(src, dst)
+            return
+        except (PermissionError, OSError):
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(delay)
+
+
 def validate(path):
-    size = os.path.getsize(path) if os.path.exists(path) else 0
+    """Validate file and archive integrity to detect truncated or corrupted downloads."""
+    if not path or not os.path.isfile(path):
+        return False
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return False
+
     if size < 1024:
         return False
-    if size > 50 * 1024 * 1024:
-        return True
+
     name = path.lower()
-    if name.endswith(".zip"):
-        with open(path, "rb") as f:
-            head = f.read(4)
-        return head.startswith(b"PK") or zipfile.is_zipfile(path)
+
+    # 1. 7-Zip Archive (.7z) integrity validation
     if name.endswith(".7z"):
-        with open(path, "rb") as f:
-            return f.read(3) == b"7z\xbc"
+        if size < 32:
+            return False
+        try:
+            with open(path, "rb") as f:
+                head = f.read(32)
+            if len(head) < 32 or not head.startswith(b"7z\xbc\xaf'\x1c"):
+                return False
+            # 7z 32-byte header structure:
+            # 6s Signature, B Major, B Minor, I StartHdrCRC, Q NextHdrOffset, Q NextHdrSize, I NextHdrCRC
+            _, _, _, _, next_hdr_offset, next_hdr_size, _ = struct.unpack("<6sBBIQQI", head)
+            expected_min = 32 + next_hdr_offset + next_hdr_size
+            # If actual file size is smaller than offset + header size, the archive is truncated!
+            if size < expected_min:
+                return False
+            if next_hdr_offset > 0 and next_hdr_size > 0:
+                with open(path, "rb") as f:
+                    f.seek(32 + next_hdr_offset)
+                    trailer = f.read(min(next_hdr_size, 1024))
+                    if not trailer:
+                        return False
+            return True
+        except Exception:
+            return False
+
+    # 2. ZIP Archive (.zip) integrity validation
+    if name.endswith(".zip"):
+        if not zipfile.is_zipfile(path):
+            return False
+        try:
+            with zipfile.ZipFile(path, "r") as zf:
+                _ = zf.infolist()
+            return True
+        except Exception:
+            return False
+
+    # 3. RAR Archive (.rar) magic validation
+    if name.endswith(".rar"):
+        if size < 7:
+            return False
+        try:
+            with open(path, "rb") as f:
+                head = f.read(8)
+            # RAR 1.5 - 4.x: Rar!\x1a\x07\x00 | RAR 5.0+: Rar!\x1a\x07\x01\x00
+            return head.startswith(b"Rar!\x1a\x07")
+        except Exception:
+            return False
+
+    # 4. Nintendo Switch PFS0 (.nsp)
     if name.endswith(".nsp"):
-        with open(path, "rb") as f:
-            return f.read(4) == b"PFS0"
+        try:
+            with open(path, "rb") as f:
+                return f.read(4) == b"PFS0"
+        except Exception:
+            return False
+
+    # 5. Nintendo Switch XCI (.xci)
+    if name.endswith(".xci"):
+        try:
+            with open(path, "rb") as f:
+                f.seek(0x100)
+                return f.read(4) == b"HEAD"
+        except Exception:
+            return False
+
+    # 6. PlayStation Package (.pkg)
     if name.endswith(".pkg"):
-        with open(path, "rb") as f:
-            return f.read(4) in (b"\x7fPKG", b"\x7fCNT")
+        try:
+            with open(path, "rb") as f:
+                return f.read(4) in (b"\x7fPKG", b"\x7fCNT")
+        except Exception:
+            return False
+
+    # 7. Disc image (.iso)
+    if name.endswith(".iso"):
+        if size < 100 * 1024:
+            return False
+        if size >= 32774:
+            try:
+                with open(path, "rb") as f:
+                    f.seek(0x8000)
+                    pvd = f.read(6)
+                    if pvd == b"\x01CD001":
+                        return True
+            except Exception:
+                pass
+        return True
+
     return True
 
 
@@ -214,6 +310,6 @@ def fix_magic_ext(path):
             if cur.lower() != ext:
                 new = root + ext
                 new = unique_path(new)
-                os.replace(path, new)
+                safe_replace(path, new)
                 return new
     return path

@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from rom.config import UA
 from rom.downloader.progress import DownloadProgress
 from rom.downloader.worker import download_chunk_worker
-from rom.utils import human, log_error, log_info
+from rom.utils import human, log_error, log_info, safe_replace
 
 
 def probe_url(url, referer=None, timeout=15):
@@ -79,7 +79,10 @@ def single_stream(url, referer, on_progress, dest, stop_event=None):
                 read += len(chunk)
                 progress.update(len(chunk))
 
-    os.replace(part, dest)
+    if total > 0 and read < total:
+        raise RuntimeError(f"Download incomplete: received {read} bytes out of {total} bytes")
+
+    safe_replace(part, dest)
     return read
 
 
@@ -131,6 +134,7 @@ def stream(url, referer, on_progress, dest):
     progress = DownloadProgress(total_size, on_progress, mode=f"{num_workers} chunks")
 
     # Step 5: Execute parallel chunk workers
+    download_ok = False
     try:
         with ThreadPoolExecutor(max_workers=num_workers) as pool:
             futures = []
@@ -146,9 +150,7 @@ def stream(url, referer, on_progress, dest):
                 fut.result()
 
         progress.finish()
-        os.replace(part, dest)
-        return total_size
-
+        download_ok = True
     except KeyboardInterrupt:
         stop_event.set()
         raise
@@ -164,3 +166,7 @@ def stream(url, referer, on_progress, dest):
                 log_error(f"Single-stream fallback also failed for {url}: {single_err}", exc=single_err)
                 raise single_err
         raise err
+
+    if download_ok:
+        safe_replace(part, dest)
+        return total_size
