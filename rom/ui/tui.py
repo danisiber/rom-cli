@@ -388,6 +388,9 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             Binding("ctrl+l", "downloads_view", "Downloads", show=False),
             Binding("ctrl+j", "downloads_view", "Downloads", show=False),
             ("space", "toggle", "Select"),
+            Binding("escape", "back_to_main", "Main (★)"),
+            Binding("r", "back_to_main", "Reset (★)", show=False),
+            Binding("slash", "focus_search", "Search (/)", show=False),
             ("p", "platform", "Platform"),
             ("o", "set_outdir", "Folder"),
             ("n", "next_page", "Page+"),
@@ -410,6 +413,7 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             self.outdir = outdir
             self.force = force
             self.browse_items = None
+            self._browse_cache = {}
             self.page = 0
             self._req_token = 0
             self.download_tasks = []
@@ -419,7 +423,7 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=True)
-            yield Input(placeholder="Type the game name and press Enter…  (p switches platform)", id="main-search")
+            yield Input(placeholder="Type game name & press Enter… (Esc / empty Enter returns to ★ main list, p platform)", id="main-search")
             yield DataTable(cursor_type="row")
             with Vertical(id="download-box"):
                 yield Static("", id="dl-header")
@@ -461,8 +465,8 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             plat = PLATFORM_LABELS.get(self.pk, "todas") if self.pk else "todas"
             dl_cnt = len(self.download_tasks)
             dl_hint = f" · l downloads ({dl_cnt})" if dl_cnt else " · l downloads"
-            return (f"platform: {plat} · space mark · d download{dl_hint} · p platform · "
-                    f"o folder · n/b page · ctrl+b options · q quit")
+            return (f"platform: {plat} · esc main (★) · space mark · d download{dl_hint} · "
+                    f"p platform · o folder · n/b page · ctrl+b options · q quit")
 
         def _set_status(self, msg):
             self._busy = None
@@ -471,11 +475,36 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
         def _busy_msg(self, msg):
             self._busy = msg
 
+        def on_key(self, event):
+            if event.key == "escape":
+                self.action_back_to_main()
+                event.prevent_default()
+            elif event.key == "down":
+                try:
+                    inp = self.query_one("#main-search", Input)
+                    if inp.has_focus:
+                        table = self.query_one(DataTable)
+                        table.focus()
+                        event.prevent_default()
+                except Exception:
+                    pass
+            elif event.key == "up":
+                try:
+                    table = self.query_one(DataTable)
+                    if table.has_focus and (table.cursor_row == 0 or table.cursor_row is None):
+                        inp = self.query_one("#main-search", Input)
+                        inp.focus()
+                        event.prevent_default()
+                except Exception:
+                    pass
+
         def on_input_submitted(self, event):
             if getattr(event.input, "id", None) != "main-search":
                 return
             q = event.value.strip()
-            if q:
+            if not q or q.lower() in ("*", "top", "popular", "home", "main", "star", "bintang", "all", "clear"):
+                self.action_back_to_main()
+            else:
                 self._start_search(q)
 
         def _start_search(self, q):
@@ -535,6 +564,8 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             if token is not None and token != self._req_token:
                 return
             self.browse_items = items
+            if self.pk:
+                self._browse_cache[self.pk] = items
             self.page = 0
             self._render_page()
 
@@ -659,12 +690,35 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
         def action_downloads_view(self):
             self.push_screen(DownloadsScreen(lambda: self.download_tasks))
 
+        def action_back_to_main(self):
+            try:
+                inp = self.query_one("#main-search", Input)
+                inp.value = ""
+            except Exception:
+                pass
+            if self.pk:
+                if self.pk in self._browse_cache and self._browse_cache[self.pk]:
+                    self.browse_items = self._browse_cache[self.pk]
+                    self.page = 0
+                    self._render_page()
+                else:
+                    self._start_browse(self.pk)
+            else:
+                self.action_platform()
+
+        def action_focus_search(self):
+            try:
+                self.query_one("#main-search", Input).focus()
+            except Exception:
+                pass
+
         def action_palette(self):
             self.push_screen(
                 OptionsScreen([
                     ("Download selected", "sel"),
                     ("Download current", "cur"),
                     ("View all downloads (Downloads Manager)", "dl_view"),
+                    ("Return to main list (★)", "main"),
                     ("Configure download folder", "outdir"),
                     ("Browse this platform", "browse"),
                     ("Switch platform", "plat"),
@@ -683,13 +737,12 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                 self.action_download()
             elif choice == "dl_view":
                 self.action_downloads_view()
+            elif choice == "main":
+                self.action_back_to_main()
             elif choice == "outdir":
                 self.action_set_outdir()
             elif choice == "browse":
-                if self.pk:
-                    self._start_browse(self.pk)
-                else:
-                    self.action_platform()
+                self.action_back_to_main()
             elif choice == "all":
                 self.action_select_all()
             elif choice == "none":
