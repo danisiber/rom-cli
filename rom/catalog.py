@@ -16,7 +16,17 @@ from rom.config import (
     POPULAR_TTL,
     WIKI_LISTS,
 )
-from rom.providers import ARCHIVE_ORG, DLA, DLP, NPS, ROMSGAMES, SOURCES, Result, request
+from rom.providers import (
+    ARCHIVE_ORG,
+    COOLROM,
+    DLA,
+    DLP,
+    NPS,
+    ROMSGAMES,
+    SOURCES,
+    Result,
+    request,
+)
 from rom.providers.archive_org import ArchiveOrg
 from rom.utils import norm, significant
 
@@ -251,9 +261,18 @@ def search(query, platform_key=None, on_progress=None, force=False):
                 add(src.search(attempt, arg, on_progress=on_progress, force=force))
             else:
                 add(src.search(attempt, arg))
+            if "coolrom" in SOURCES and len(results) < 12:
+                try:
+                    add(COOLROM.search(attempt, platform_key))
+                except Exception:
+                    pass
         else:
             try:
                 add(SOURCES["romsgames"].search(attempt))
+            except Exception:
+                pass
+            try:
+                add(COOLROM.search(attempt))
             except Exception:
                 pass
             try:
