@@ -23,7 +23,7 @@ else
   PYTHON ?= $(shell for c in "$$HOME/.venvs/rom/bin/python" python3 python py; do if command -v "$$c" >/dev/null 2>&1 && "$$c" -c "import sys" >/dev/null 2>&1; then echo "$$c"; exit 0; fi; done; echo python)
 endif
 
-.PHONY: help run install install-bat exe uninstall uninstall-all check test clean clean-cache
+.PHONY: help run rom install install-bat exe uninstall uninstall-all check test clean clean-cache
 
 help: ## Show this help message
 	@echo rom-cli - Retro ROM Search ^& Downloader CLI
@@ -36,6 +36,8 @@ help: ## Show this help message
 
 run: ## Run rom interactive TUI (or: make run ARGS="-p switch")
 	@"$(PYTHON)" bin/rom $(ARGS)
+
+rom: run ## Run rom interactive TUI (alias for make run)
 
 install: ## Install rom-cli and dependencies (recommended for Linux/macOS/Git Bash)
 	@bash ./install.sh

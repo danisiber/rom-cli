@@ -60,7 +60,7 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                 self.dismiss(None)
 
         def on_click(self, event):
-            if event.target == self:
+            if getattr(event, "widget", None) == self:
                 self.dismiss(None)
 
         def on_option_list_option_selected(self, event):
