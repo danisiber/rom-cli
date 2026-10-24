@@ -39,12 +39,27 @@ different destination.
 |---|---|
 | `make install` | Install venv and binary wrappers (Linux / macOS / Git Bash) |
 | `make install-bat` | Install on Windows using native batch script (CMD / PowerShell) |
+| `make exe` | Compile standalone Windows executable (`dist/rom.exe`) using PyInstaller |
 | `make check` | Validate Python syntax across all modules |
 | `make test` | Test installed CLI binary (`rom -l`) |
-| `make clean` | Clean Python bytecode (`__pycache__`, `.pyc`) |
+| `make clean` | Clean Python bytecode (`__pycache__`, `.pyc`) and build artifacts (`build`, `dist`) |
 | `make clean-cache` | Clean downloaded metadata & catalog caches (`~/.cache/rom-cli`) |
 | `make uninstall` | Remove binary wrappers from `~/bin` |
 | `make uninstall-all` | Remove wrappers, virtual environment, and cache |
+
+## Standalone Windows Executable (.exe)
+
+You can compile `rom-cli` into a single standalone `rom.exe` file that runs without requiring Python installed:
+
+```bat
+:: Via native Windows batch script (CMD / PowerShell):
+build-exe.bat
+
+:: Or via Makefile:
+make exe
+```
+
+The standalone executable will be generated at `dist\rom.exe` (and automatically copied to `%USERPROFILE%\bin\rom.exe` if present in your PATH).
 
 ## Usage
 
