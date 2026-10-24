@@ -7,6 +7,7 @@ from rom.config import LOG_FILE
 from rom.downloader.engine import stream
 from rom.providers import DLP, SOURCES
 from rom.utils import (
+    check_integrity,
     clear_status,
     ext_for,
     fix_magic_ext,
@@ -137,12 +138,36 @@ def download(result, outdir, on_progress=None):
     if on_progress:
         on_progress(0, 0, "verifying file integrity…")
     path = fix_magic_ext(path)
-    if not validate(path):
+    valid, reason = check_integrity(path)
+    if not valid:
         try:
             os.remove(path)
         except OSError:
             pass
-        raise RuntimeError("invalid or incomplete file (corrupted or truncated upstream archive)")
+
+        # If romsgames file is corrupted upstream, try automatic fallback to Archive.org!
+        if result.source == "romsgames" and result.platform:
+            from rom.providers import ARCHIVE_ORG
+            if on_progress:
+                on_progress(0, 0, f"upstream corrupt ({reason}) — searching Archive.org mirror…")
+            try:
+                ao_results = ARCHIVE_ORG.search(result.title, result.platform.lower().replace("playstation 2", "ps2").replace("playstation", "ps1"))
+                if not ao_results:
+                    clean_t = re.sub(r"\s*\(.*?\)", "", result.title).strip()
+                    ao_results = ARCHIVE_ORG.search(clean_t, "ps2" if "2" in result.platform else None)
+                if ao_results:
+                    best_alt = ao_results[0]
+                    for alt in ao_results:
+                        if "europe" in alt.title.lower() or "usa" in alt.title.lower() or alt.title == result.title:
+                            best_alt = alt
+                            break
+                    if on_progress:
+                        on_progress(0, 0, f"found alternative mirror on Archive.org: {best_alt.title[:35]}…")
+                    return download(best_alt, outdir, on_progress)
+            except Exception as fb_err:
+                log_error(f"Fallback to Archive.org failed: {fb_err}", exc=fb_err)
+
+        raise RuntimeError(reason)
     return path
 
 

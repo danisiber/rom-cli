@@ -180,110 +180,115 @@ def safe_replace(src, dst, max_retries=10, delay=0.15):
             time.sleep(delay)
 
 
-def validate(path):
-    """Validate file and archive integrity to detect truncated or corrupted downloads."""
+def check_integrity(path):
+    """Validate file and archive integrity, returning (is_valid, reason_if_invalid)."""
     if not path or not os.path.isfile(path):
-        return False
+        return False, "File does not exist on disk"
     try:
         size = os.path.getsize(path)
-    except OSError:
-        return False
+    except OSError as e:
+        return False, f"File access error: {e}"
 
     if size < 1024:
-        return False
+        return False, f"File too small ({human(size)})"
 
     name = path.lower()
 
     # 1. 7-Zip Archive (.7z) integrity validation
     if name.endswith(".7z"):
         if size < 32:
-            return False
+            return False, "Corrupted archive (size under 32 bytes)"
         try:
             with open(path, "rb") as f:
                 head = f.read(32)
             if len(head) < 32 or not head.startswith(b"7z\xbc\xaf'\x1c"):
-                return False
+                return False, "Invalid 7z signature (corrupted archive)"
             # 7z 32-byte header structure:
             # 6s Signature, B Major, B Minor, I StartHdrCRC, Q NextHdrOffset, Q NextHdrSize, I NextHdrCRC
             _, _, _, _, next_hdr_offset, next_hdr_size, _ = struct.unpack("<6sBBIQQI", head)
             expected_min = 32 + next_hdr_offset + next_hdr_size
             # If actual file size is smaller than offset + header size, the archive is truncated!
             if size < expected_min:
-                return False
+                return False, f"Corrupted upstream: server gave {human(size)}, but archive requires {human(expected_min)}"
             if next_hdr_offset > 0 and next_hdr_size > 0:
                 with open(path, "rb") as f:
                     f.seek(32 + next_hdr_offset)
                     trailer = f.read(min(next_hdr_size, 1024))
                     if not trailer:
-                        return False
-            return True
-        except Exception:
-            return False
+                        return False, "Corrupted 7z archive (truncated end header)"
+            return True, ""
+        except Exception as e:
+            return False, f"7z parsing error: {e}"
 
     # 2. ZIP Archive (.zip) integrity validation
     if name.endswith(".zip"):
         if not zipfile.is_zipfile(path):
-            return False
+            return False, f"Corrupted upstream: ZIP archive is incomplete/truncated ({human(size)})"
         try:
             with zipfile.ZipFile(path, "r") as zf:
                 _ = zf.infolist()
-            return True
-        except Exception:
-            return False
+            return True, ""
+        except Exception as e:
+            return False, f"Corrupted ZIP archive: {e}"
 
     # 3. RAR Archive (.rar) magic validation
     if name.endswith(".rar"):
         if size < 7:
-            return False
+            return False, "RAR file too small"
         try:
             with open(path, "rb") as f:
                 head = f.read(8)
             # RAR 1.5 - 4.x: Rar!\x1a\x07\x00 | RAR 5.0+: Rar!\x1a\x07\x01\x00
-            return head.startswith(b"Rar!\x1a\x07")
-        except Exception:
-            return False
+            if not head.startswith(b"Rar!\x1a\x07"):
+                return False, "Invalid RAR archive signature"
+            return True, ""
+        except Exception as e:
+            return False, f"RAR read error: {e}"
 
     # 4. Nintendo Switch PFS0 (.nsp)
     if name.endswith(".nsp"):
         try:
             with open(path, "rb") as f:
-                return f.read(4) == b"PFS0"
-        except Exception:
-            return False
+                if f.read(4) != b"PFS0":
+                    return False, "Invalid NSP PFS0 header"
+            return True, ""
+        except Exception as e:
+            return False, f"NSP read error: {e}"
 
     # 5. Nintendo Switch XCI (.xci)
     if name.endswith(".xci"):
         try:
             with open(path, "rb") as f:
                 f.seek(0x100)
-                return f.read(4) == b"HEAD"
-        except Exception:
-            return False
+                if f.read(4) != b"HEAD":
+                    return False, "Invalid XCI HEAD header"
+            return True, ""
+        except Exception as e:
+            return False, f"XCI read error: {e}"
 
     # 6. PlayStation Package (.pkg)
     if name.endswith(".pkg"):
         try:
             with open(path, "rb") as f:
-                return f.read(4) in (b"\x7fPKG", b"\x7fCNT")
-        except Exception:
-            return False
+                if f.read(4) not in (b"\x7fPKG", b"\x7fCNT"):
+                    return False, "Invalid PKG header"
+            return True, ""
+        except Exception as e:
+            return False, f"PKG read error: {e}"
 
     # 7. Disc image (.iso)
     if name.endswith(".iso"):
         if size < 100 * 1024:
-            return False
-        if size >= 32774:
-            try:
-                with open(path, "rb") as f:
-                    f.seek(0x8000)
-                    pvd = f.read(6)
-                    if pvd == b"\x01CD001":
-                        return True
-            except Exception:
-                pass
-        return True
+            return False, "ISO file too small"
+        return True, ""
 
-    return True
+    return True, ""
+
+
+def validate(path):
+    """Validate file and archive integrity to detect truncated or corrupted downloads."""
+    valid, _ = check_integrity(path)
+    return valid
 
 
 def ext_for(result, name, url):

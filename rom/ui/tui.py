@@ -221,7 +221,7 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
 
         def on_mount(self):
             table = self.query_one("#dl-all-table", DataTable)
-            table.add_columns("#", "Status", "Title", "Platform", "Progress", "Speed", "Transferred", "ETA", "Destination / Details")
+            table.add_columns("#", "Status", "Title", "Platform", "Progress", "Speed", "Size / Transferred", "ETA", "Destination / Details")
             self.col_keys = list(table.columns.keys())
             self._render_rows()
             self.set_interval(0.25, self._refresh_view)
@@ -248,6 +248,19 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             pct_str = f"{pct:5.1f}% [{bar_str}]"
 
             dest = t.get("dest") or t.get("error") or "Queued in background…"
+
+            # Calculate clear Size / Transferred representation
+            curr_read = t.get("read", 0)
+            curr_tot = t.get("total", 0)
+            if curr_tot > 0 and curr_read > 0:
+                size_str = f"{human(curr_read)} / {human(curr_tot)}"
+            elif curr_tot > 0:
+                size_str = f"0 B / {human(curr_tot)}"
+            elif curr_read > 0:
+                size_str = human(curr_read)
+            else:
+                size_str = str(t.get("transferred_str", "--"))
+
             return [
                 str(t.get("id", 1)),
                 status_txt,
@@ -255,7 +268,7 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                 str(t.get("platform", "")),
                 pct_str,
                 str(t.get("speed_str", "-- MB/s")),
-                str(t.get("transferred_str", "--")),
+                size_str,
                 str(t.get("eta_str", "--:--")),
                 str(dest),
             ]
@@ -844,20 +857,26 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
 
                 def prog(read, tot, msg, info=None, t=task):
                     if tot and tot > 0:
-                        pct = (read * 100.0 / tot)
-                        speed_str = info.get("speed_str", "-- MB/s") if info else ""
-                        eta_str = info.get("eta_str", "--:--") if info else ""
-                        mode_str = info.get("mode", "single") if info else ""
-                        trans_str = f"{human(read)} / {human(tot)}"
+                        t["total"] = tot
+                    if read and read > 0:
+                        t["read"] = read
+
+                    curr_tot = t.get("total", 0)
+                    curr_read = t.get("read", 0)
+
+                    if curr_tot > 0:
+                        pct = min(100.0, (curr_read * 100.0 / curr_tot))
+                        speed_str = info.get("speed_str", t.get("speed_str", "-- MB/s")) if info else t.get("speed_str", "-- MB/s")
+                        eta_str = info.get("eta_str", t.get("eta_str", "--:--")) if info else t.get("eta_str", "--:--")
+                        mode_str = info.get("mode", t.get("mode_str", "single")) if info else t.get("mode_str", "single")
+                        trans_str = f"{human(curr_read)} / {human(curr_tot)}"
                     else:
                         pct = 0.0
                         speed_str = "-- MB/s"
                         eta_str = "--:--"
                         mode_str = "single"
-                        trans_str = human(read) if read else "0 B"
+                        trans_str = human(curr_read) if curr_read else "0 B"
 
-                    t["read"] = read
-                    t["total"] = tot or 0
                     t["percent"] = pct
                     t["speed_str"] = speed_str
                     t["transferred_str"] = trans_str
@@ -868,17 +887,19 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                         try:
                             q_cnt = len(self.download_queue)
                             q_hint = f" · ({q_cnt} queued)" if q_cnt else ""
-                            if tot and tot > 0:
-                                dl_progress.update(total=tot, progress=read)
+                            if curr_tot > 0:
+                                dl_progress.update(total=curr_tot, progress=curr_read)
                                 dl_header.update(f"⬇ [{t['id']}/{len(self.download_tasks)}] {t['title'][:40]} ({t['platform']}) · {pct:.1f}%{q_hint}")
                                 dl_speed.update(f"⚡ Speed: {speed_str}")
-                                dl_transferred.update(f"📦 {trans_str} ({pct:.1f}%)")
+                                dl_transferred.update(f"📦 Size: {trans_str} ({pct:.1f}%)")
                                 dl_eta.update(f"⏳ ETA: {eta_str}")
                                 dl_mode.update(f"🧵 {mode_str}")
                             else:
                                 clean_m = re.sub(r"^[\[\d\w\s]+\]\s*", "", str(msg or ""))
                                 dl_header.update(f"⬇ [{t['id']}/{len(self.download_tasks)}] {t['title'][:40]} ({t['platform']}){q_hint}")
                                 dl_speed.update(f"⚡ Status: {clean_m[:25]}")
+                                if curr_read > 0:
+                                    dl_transferred.update(f"📦 Transferred: {human(curr_read)}")
                         except Exception:
                             pass
                     self.call_from_thread(update_prog)
@@ -916,6 +937,12 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                 except Exception as e:
                     task["status"] = "failed"
                     task["error"] = str(e)
+                    curr_read = task.get("read", 0)
+                    curr_tot = task.get("total", 0)
+                    if curr_read and curr_tot:
+                        task["transferred_str"] = f"{human(curr_read)} / {human(curr_tot)}"
+                    elif curr_read:
+                        task["transferred_str"] = human(curr_read)
                     self.downloading_titles.discard(r.title)
                     self.failed_titles.add(r.title)
                     self.call_from_thread(self._redraw)
@@ -933,6 +960,12 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                         q_hint = f" · ({q_cnt} queued)" if q_cnt else ""
                         dl_header.update(f"✖ [{t['id']}/{len(self.download_tasks)}] {t['title'][:40]} — FAILED{q_hint}")
                         dl_speed.update("✖ Error")
+                        curr_r = t.get("read", 0)
+                        curr_t = t.get("total", 0)
+                        if curr_r and curr_t:
+                            dl_transferred.update(f"📦 Size: {human(curr_r)} / {human(curr_t)}")
+                        elif curr_r:
+                            dl_transferred.update(f"📦 Transferred: {human(curr_r)}")
                         dl_dest.update(f"Error: {err_m} (press 'l' for all downloads)")
                     self.call_from_thread(update_err)
 

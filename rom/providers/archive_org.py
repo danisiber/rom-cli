@@ -137,7 +137,7 @@ class ArchiveOrg(BaseProvider):
         tag, exts = self.tags[platform_key]
         q = f'({query}) AND mediatype:software AND ("{tag}" OR "{platform_key}")'
         url = (f"{self.base}/advancedsearch.php?q={urllib.parse.quote(q)}"
-               "&fl%5B%5D=identifier&fl%5B%5D=title&rows=20&page=1&output=json")
+               "&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=item_size&rows=20&page=1&output=json")
         st, _, body = request(url, retries=2)
         if st != 200:
             return []
@@ -149,8 +149,10 @@ class ArchiveOrg(BaseProvider):
         for doc in docs:
             title = clean(doc.get("title") or "")
             if title:
+                item_sz = doc.get("item_size")
+                sz_str = human(int(item_sz)) if item_sz else ""
                 out.append(Result(self.name, title, PLATFORM_LABELS.get(platform_key, platform_key),
-                                  f"{self.base}/details/{doc['identifier']}", meta={"exts": exts}))
+                                  f"{self.base}/details/{doc['identifier']}", size=sz_str, meta={"exts": exts}))
         return out
 
     def resolve(self, result):
