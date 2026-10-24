@@ -46,6 +46,7 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                 yield Static("↑↓ move · Enter select · esc close", id="opts-hint")
 
         def on_option_list_option_selected(self, event):
+            event.stop()
             self.dismiss(event.option_id)
 
         def action_cancel(self):
@@ -100,6 +101,7 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                 opt_list.add_options([Option("✖ No platforms match", id="__none__", disabled=True)])
 
         def on_input_submitted(self, event: Input.Submitted):
+            event.stop()
             if self.filtered:
                 opt_list = self.query_one("#plat-list", OptionList)
                 chosen_idx = opt_list.highlighted if opt_list.highlighted is not None else 0
@@ -125,6 +127,7 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                     event.prevent_default()
 
         def on_option_list_option_selected(self, event: OptionList.OptionSelected):
+            event.stop()
             if event.option_id and event.option_id != "__none__":
                 self.dismiss(event.option_id)
 
@@ -163,11 +166,147 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             inp.cursor_position = len(inp.value)
 
         def on_input_submitted(self, event: Input.Submitted):
+            event.stop()
             val = event.value.strip()
             if val:
                 self.dismiss(val)
             else:
                 self.dismiss(None)
+
+        def action_cancel(self):
+            self.dismiss(None)
+
+    class DownloadsScreen(ModalScreen):
+        CSS = """
+        DownloadsScreen { align: center middle; background: $background 70%; }
+        #dl-all-box {
+            width: 95%;
+            height: 85%;
+            background: $surface;
+            border: heavy $primary;
+            padding: 1 2;
+        }
+        #dl-all-title {
+            text-style: bold;
+            color: $accent;
+            margin-bottom: 1;
+        }
+        #dl-all-table {
+            height: 1fr;
+        }
+        #dl-all-hint {
+            text-style: dim italic;
+            margin-top: 1;
+        }
+        """
+        BINDINGS = [
+            Binding("escape", "cancel", "Close"),
+            Binding("l", "cancel", "Close"),
+            Binding("ctrl+l", "cancel", "Close", show=False),
+            Binding("ctrl+j", "cancel", "Close", show=False),
+            Binding("q", "cancel", "Close"),
+        ]
+
+        def __init__(self, get_tasks_callback):
+            super().__init__()
+            self.get_tasks = get_tasks_callback
+            self.col_keys = []
+            self.known_ids = set()
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="dl-all-box"):
+                yield Static("📥 Downloads Manager", id="dl-all-title")
+                yield DataTable(id="dl-all-table", cursor_type="row")
+                yield Static("esc / l / q close · enter view details · live progress updates", id="dl-all-hint")
+
+        def on_mount(self):
+            table = self.query_one("#dl-all-table", DataTable)
+            table.add_columns("#", "Status", "Title", "Platform", "Progress", "Speed", "Transferred", "ETA", "Destination / Details")
+            self.col_keys = list(table.columns.keys())
+            self._render_rows()
+            self.set_interval(0.25, self._refresh_view)
+
+        def _cell_data(self, t):
+            from rich.text import Text as RT
+            st = t.get("status", "queued")
+            if st == "downloading":
+                status_txt = RT(" ⏳ DOWNLOADING ", style="bold black on yellow")
+            elif st == "completed":
+                status_txt = RT(" ✔ COMPLETED ", style="bold white on dark_green")
+            elif st == "exists":
+                status_txt = RT(" ⏭ ALREADY SAVED ", style="bold black on cyan")
+            elif st == "failed":
+                status_txt = RT(" ✖ FAILED ", style="bold white on dark_red")
+            else:
+                status_txt = RT(" 🕒 QUEUED ", style="bold black on bright_black")
+
+            pct = t.get("percent", 0.0)
+            bar_len = 10
+            filled = int((pct / 100.0) * bar_len)
+            filled = max(0, min(bar_len, filled))
+            bar_str = "█" * filled + "░" * (bar_len - filled)
+            pct_str = f"{pct:5.1f}% [{bar_str}]"
+
+            dest = t.get("dest") or t.get("error") or "Queued in background…"
+            return [
+                str(t.get("id", 1)),
+                status_txt,
+                str(t.get("title", "")[:45]),
+                str(t.get("platform", "")),
+                pct_str,
+                str(t.get("speed_str", "-- MB/s")),
+                str(t.get("transferred_str", "--")),
+                str(t.get("eta_str", "--:--")),
+                str(dest),
+            ]
+
+        def _refresh_view(self):
+            tasks = self.get_tasks()
+            title_widget = self.query_one("#dl-all-title", Static)
+            active_cnt = sum(1 for t in tasks if t.get("status") == "downloading")
+            queued_cnt = sum(1 for t in tasks if t.get("status") == "queued")
+            completed_cnt = sum(1 for t in tasks if t.get("status") in ("completed", "exists"))
+            failed_cnt = sum(1 for t in tasks if t.get("status") == "failed")
+            title_widget.update(
+                f"📥 Downloads Manager ({len(tasks)} total · {active_cnt} active · {queued_cnt} queued · {completed_cnt} done · {failed_cnt} failed)"
+            )
+            self._render_rows()
+
+        def _render_rows(self):
+            tasks = self.get_tasks()
+            table = self.query_one("#dl-all-table", DataTable)
+            if not tasks:
+                if not self.known_ids:
+                    table.clear()
+                    table.add_row("-", "No downloads yet", "Use 'd' or 'ctrl+b' to start downloads", "", "", "", "", "", "", key="__empty__")
+                    self.known_ids.add("__empty__")
+                return
+
+            if "__empty__" in self.known_ids:
+                table.clear()
+                self.known_ids.clear()
+
+            for t in tasks:
+                tid = str(t["id"])
+                cells = self._cell_data(t)
+                if tid not in self.known_ids:
+                    table.add_row(*cells, key=tid)
+                    self.known_ids.add(tid)
+                else:
+                    for ck, val in zip(self.col_keys, cells):
+                        try:
+                            table.update_cell(tid, ck, val)
+                        except Exception:
+                            pass
+
+        def on_data_table_row_selected(self, event):
+            table = self.query_one("#dl-all-table", DataTable)
+            if table.cursor_row is not None:
+                tasks = self.get_tasks()
+                if 0 <= table.cursor_row < len(tasks):
+                    t = tasks[table.cursor_row]
+                    dest = t.get("dest") or t.get("error") or "In queue"
+                    self.notify(f"{t['title']}\nStatus: {t['status'].upper()}\nInfo: {dest}", title=f"Task #{t['id']}")
 
         def action_cancel(self):
             self.dismiss(None)
@@ -232,6 +371,9 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
         BINDINGS = [
             ("q", "quit", "Quit"),
             ("d", "download", "Download"),
+            Binding("l", "downloads_view", "Downloads"),
+            Binding("ctrl+l", "downloads_view", "Downloads", show=False),
+            Binding("ctrl+j", "downloads_view", "Downloads", show=False),
             ("space", "toggle", "Select"),
             ("p", "platform", "Platform"),
             ("o", "set_outdir", "Folder"),
@@ -256,10 +398,15 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             self.force = force
             self.browse_items = None
             self.page = 0
+            self._req_token = 0
+            self.download_tasks = []
+            self.download_queue = []
+            self._dl_worker_running = False
+            self._dl_lock = threading.Lock()
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=True)
-            yield Input(placeholder="Type the game name and press Enter…  (p switches platform)")
+            yield Input(placeholder="Type the game name and press Enter…  (p switches platform)", id="main-search")
             yield DataTable(cursor_type="row")
             with Vertical(id="download-box"):
                 yield Static("", id="dl-header")
@@ -281,9 +428,9 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             self._frame = 0
             self.set_interval(0.1, self._tick)
             self._set_status(self._hint())
-            self.query_one(Input).focus()
+            self.query_one("#main-search", Input).focus()
             if self.initial_query:
-                self.query_one(Input).value = self.initial_query
+                self.query_one("#main-search", Input).value = self.initial_query
                 self._start_search(self.initial_query)
             elif self.pk:
                 self._start_browse(self.pk)
@@ -299,7 +446,9 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
 
         def _hint(self):
             plat = PLATFORM_LABELS.get(self.pk, "todas") if self.pk else "todas"
-            return (f"platform: {plat} · space mark · d download · p platform · "
+            dl_cnt = len(self.download_tasks)
+            dl_hint = f" · l downloads ({dl_cnt})" if dl_cnt else " · l downloads"
+            return (f"platform: {plat} · space mark · d download{dl_hint} · p platform · "
                     f"o folder · n/b page · ctrl+b options · q quit")
 
         def _set_status(self, msg):
@@ -310,29 +459,37 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             self._busy = msg
 
         def on_input_submitted(self, event):
+            if getattr(event.input, "id", None) != "main-search":
+                return
             q = event.value.strip()
             if q:
                 self._start_search(q)
 
         def _start_search(self, q):
+            self._req_token += 1
+            token = self._req_token
             self.last_query = q
             self.selected.clear()
             self._busy = f"searching for '{q}'…"
             self.query_one(Static).update(f"⠋ searching for '{q}'…")
-            threading.Thread(target=self._search_bg, args=(q,), daemon=True).start()
+            threading.Thread(target=self._search_bg, args=(q, token), daemon=True).start()
 
-        def _search_bg(self, q):
+        def _search_bg(self, q, token):
             try:
                 results = search(
                     q, self.pk or None,
                     on_progress=lambda d, t: self._busy_msg(f"building the catalog index… {d}/{t}"),
                     force=self.force)
                 self.force = False
-                self.call_from_thread(self._show, rank(results, q))
+                if token == self._req_token:
+                    self.call_from_thread(self._show, rank(results, q), token)
             except Exception as e:
-                self.call_from_thread(self._set_status, f"✖ search error: {e}")
+                if token == self._req_token:
+                    self.call_from_thread(self._set_status, f"✖ search error: {e}")
 
-        def _show(self, results):
+        def _show(self, results, token=None):
+            if token is not None and token != self._req_token:
+                return
             self.browse_items = None
             table = self.query_one(DataTable)
             table.clear()
@@ -344,19 +501,26 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             self._set_status(f"{msg} — {self._hint()}")
 
         def _start_browse(self, pk):
+            self._req_token += 1
+            token = self._req_token
             self.last_query = ""
             self.selected.clear()
             self._busy = f"opening {PLATFORM_LABELS.get(pk, pk)}…"
             self.query_one(Static).update(f"⠋ {self._busy}")
-            threading.Thread(target=self._browse_bg, args=(pk,), daemon=True).start()
+            threading.Thread(target=self._browse_bg, args=(pk, token), daemon=True).start()
 
-        def _browse_bg(self, pk):
+        def _browse_bg(self, pk, token):
             try:
-                self.call_from_thread(self._set_browse, browse_items(pk))
+                items = browse_items(pk)
+                if token == self._req_token:
+                    self.call_from_thread(self._set_browse, items, token)
             except Exception as e:
-                self.call_from_thread(self._set_status, f"✖ {e}")
+                if token == self._req_token:
+                    self.call_from_thread(self._set_status, f"✖ {e}")
 
-        def _set_browse(self, items):
+        def _set_browse(self, items, token=None):
+            if token is not None and token != self._req_token:
+                return
             self.browse_items = items
             self.page = 0
             self._render_page()
@@ -420,16 +584,26 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
 
         def _redraw(self):
             table = self.query_one(DataTable)
-            for i, r in enumerate(self.results[:200]):
+            for i, r in enumerate(self.results):
                 for ck, val in zip(self.col_keys, self._cells(i, r)):
                     table.update_cell(str(i), ck, val)
 
         def _status_sel(self):
             n = len(self.selected)
-            msg = f"{len(self.results)} results"
-            if n:
-                msg += f" · ✔ {n} selected"
-            self._set_status(msg + " — " + self._hint())
+            if self.browse_items is not None:
+                items = self.browse_items or []
+                size = 300
+                pages = max(1, (len(items) + size - 1) // size)
+                plat = PLATFORM_LABELS.get(self.pk, self.pk or "todas")
+                msg = f"{plat} · {len(items)} items · page {self.page + 1}/{pages}"
+                if n:
+                    msg += f" · ✔ {n} selected"
+                self._set_status(msg + " — n/b page · space mark · d download · q quit")
+            else:
+                msg = f"{len(self.results)} results"
+                if n:
+                    msg += f" · ✔ {n} selected"
+                self._set_status(msg + " — " + self._hint())
 
         def action_toggle(self):
             table = self.query_one(DataTable)
@@ -441,7 +615,7 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             self._status_sel()
 
         def action_select_all(self):
-            self.selected = set(range(len(self.results[:200])))
+            self.selected = set(range(len(self.results)))
             self._redraw()
             self._status_sel()
 
@@ -458,19 +632,26 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                 if val is None:
                     return
                 self.pk = "" if val == "all" else val
-                if self.last_query:
-                    self._start_search(self.last_query)
-                elif self.pk:
+                self.last_query = ""
+                try:
+                    self.query_one("#main-search", Input).value = ""
+                except Exception:
+                    pass
+                if self.pk:
                     self._start_browse(self.pk)
                 else:
                     self._set_status("platform: all — type a name and press Enter")
             self.push_screen(PlataformasScreen([]), callback=chosen)
+
+        def action_downloads_view(self):
+            self.push_screen(DownloadsScreen(lambda: self.download_tasks))
 
         def action_palette(self):
             self.push_screen(
                 OptionsScreen([
                     ("Download selected", "sel"),
                     ("Download current", "cur"),
+                    ("View all downloads (Downloads Manager)", "dl_view"),
                     ("Configure download folder", "outdir"),
                     ("Browse this platform", "browse"),
                     ("Switch platform", "plat"),
@@ -487,6 +668,8 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                 self._batch([self.results[i] for i in sorted(self.selected)])
             elif choice == "cur":
                 self.action_download()
+            elif choice == "dl_view":
+                self.action_downloads_view()
             elif choice == "outdir":
                 self.action_set_outdir()
             elif choice == "browse":
@@ -532,13 +715,55 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             if not rows:
                 self._set_status("nothing selected")
                 return
-            self._set_status(f"downloading 0/{len(rows)}…")
-            threading.Thread(target=self._batch_bg, args=(rows,), daemon=True).start()
+            added = 0
+            with self._dl_lock:
+                for r in rows:
+                    already = any(
+                        t["title"] == r.title and t["status"] in ("queued", "downloading")
+                        for t in self.download_tasks
+                    )
+                    if already:
+                        continue
+                    tid = len(self.download_tasks) + 1
+                    task = {
+                        "id": tid,
+                        "result": r,
+                        "title": r.title,
+                        "platform": r.platform,
+                        "status": "queued",
+                        "read": 0,
+                        "total": 0,
+                        "percent": 0.0,
+                        "speed_str": "-- MB/s",
+                        "transferred_str": "0 B",
+                        "eta_str": "--:--",
+                        "mode_str": "",
+                        "dest": "",
+                        "error": "",
+                    }
+                    self.download_tasks.append(task)
+                    self.download_queue.append(tid)
+                    self.downloading_titles.add(r.title)
+                    added += 1
 
-        def _batch_bg(self, rows):
+            if added == 0:
+                self.notify("Selected game(s) already in download queue", title="Already Queued", severity="warning")
+                return
+
+            self._redraw()
+            self._ensure_dl_worker()
+            self._set_status(f"{len(self.download_queue)} download(s) in queue — press 'l' to view")
+            self.notify(f"Added {added} game(s) to download queue (press 'l' to view all)", title="Queue Updated", severity="information")
+
+        def _ensure_dl_worker(self):
+            with self._dl_lock:
+                if not self._dl_worker_running:
+                    self._dl_worker_running = True
+                    threading.Thread(target=self._dl_worker_loop, daemon=True).start()
+
+        def _dl_worker_loop(self):
             import os
             import time
-            ok, fail, total = 0, 0, len(rows)
 
             dl_box = self.query_one("#download-box")
             dl_header = self.query_one("#dl-header", Static)
@@ -551,70 +776,108 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
 
             self.call_from_thread(dl_box.add_class, "active")
 
-            for n, r in enumerate(rows, 1):
-                # Check if already downloaded before attempting download
+            while True:
+                with self._dl_lock:
+                    if not self.download_queue:
+                        self._dl_worker_running = False
+                        break
+                    task_id = self.download_queue.pop(0)
+                    task = next((t for t in self.download_tasks if t["id"] == task_id), None)
+
+                if not task:
+                    continue
+
+                r = task["result"]
+                task["status"] = "downloading"
+                self.call_from_thread(self._redraw)
+
+                total_cnt = len(self.download_tasks)
+                queued_cnt = len(self.download_queue)
+
                 existing = check_already_downloaded(r, self.outdir)
                 if existing:
                     size_str = human(os.path.getsize(existing)) if os.path.exists(existing) else ""
-                    ok += 1
+                    task["status"] = "exists"
+                    task["percent"] = 100.0
+                    task["transferred_str"] = size_str
+                    task["dest"] = existing
                     self.downloading_titles.discard(r.title)
                     self.completed_titles.add(r.title)
                     self.call_from_thread(self._redraw)
                     self.call_from_thread(
                         self.notify,
                         f"Already downloaded: {r.title} ({size_str})",
-                        title=f"File Exists [{n}/{total}]",
+                        title=f"File Exists [{task['id']}/{total_cnt}]",
                         severity="warning",
                     )
-                    def update_cached(n=n, r=r, existing=existing, size_str=size_str):
-                        dl_header.update(f"✔ [{n}/{total}] {r.title[:45]} ({r.platform}) — ALREADY DOWNLOADED")
+                    def update_cached(t=task, q_cnt=queued_cnt, ex=existing, sz=size_str):
+                        q_hint = f" · ({q_cnt} queued)" if q_cnt else ""
+                        dl_header.update(f"✔ [{t['id']}/{len(self.download_tasks)}] {t['title'][:40]} ({t['platform']}) — ALREADY DOWNLOADED{q_hint}")
                         dl_progress.update(total=100, progress=100)
                         dl_speed.update("⚡ Status: Skipped")
-                        dl_transferred.update(f"📦 Size: {size_str}")
+                        dl_transferred.update(f"📦 Size: {sz}")
                         dl_eta.update("⏳ ETA: 00:00")
                         dl_mode.update("📁 Local disk")
-                        dl_dest.update(f"📂 File: {existing} (Already downloaded)")
+                        dl_dest.update(f"📂 File: {ex} (press 'l' for all downloads)")
                     self.call_from_thread(update_cached)
                     time.sleep(0.4)
                     continue
 
-                self.downloading_titles.add(r.title)
-                self.call_from_thread(self._redraw)
                 self.call_from_thread(
                     self.notify,
                     f"Downloading: {r.title}",
-                    title=f"Download [{n}/{total}]",
+                    title=f"Download [{task['id']}/{total_cnt}]",
                     severity="information",
                 )
 
-                def update_ui_init(n=n, r=r):
-                    dl_header.update(f"⬇ [{n}/{total}] {r.title[:45]} ({r.platform}) · Preparing…")
+                def update_ui_init(t=task, q_cnt=queued_cnt):
+                    q_hint = f" · ({q_cnt} queued)" if q_cnt else ""
+                    dl_header.update(f"⬇ [{t['id']}/{len(self.download_tasks)}] {t['title'][:40]} ({t['platform']}) · Preparing…{q_hint}")
                     dl_progress.update(total=None, progress=0)
                     dl_speed.update("⚡ Speed: Connecting…")
                     dl_transferred.update("📦 Transferred: 0 B")
                     dl_eta.update("⏳ ETA: Estimating…")
                     dl_mode.update("🧵 Mode: Initing")
-                    dl_dest.update(f"📂 Destination folder: {self.outdir}")
+                    dl_dest.update(f"📂 Destination: {self.outdir} (press 'l' for all downloads)")
 
                 self.call_from_thread(update_ui_init)
 
-                def prog(read, tot, msg, info=None, n=n, r=r):
+                def prog(read, tot, msg, info=None, t=task):
+                    if tot and tot > 0:
+                        pct = (read * 100.0 / tot)
+                        speed_str = info.get("speed_str", "-- MB/s") if info else ""
+                        eta_str = info.get("eta_str", "--:--") if info else ""
+                        mode_str = info.get("mode", "single") if info else ""
+                        trans_str = f"{human(read)} / {human(tot)}"
+                    else:
+                        pct = 0.0
+                        speed_str = "-- MB/s"
+                        eta_str = "--:--"
+                        mode_str = "single"
+                        trans_str = human(read) if read else "0 B"
+
+                    t["read"] = read
+                    t["total"] = tot or 0
+                    t["percent"] = pct
+                    t["speed_str"] = speed_str
+                    t["transferred_str"] = trans_str
+                    t["eta_str"] = eta_str
+                    t["mode_str"] = mode_str
+
                     def update_prog():
                         try:
+                            q_cnt = len(self.download_queue)
+                            q_hint = f" · ({q_cnt} queued)" if q_cnt else ""
                             if tot and tot > 0:
                                 dl_progress.update(total=tot, progress=read)
-                                speed_str = info.get("speed_str", "-- MB/s") if info else ""
-                                eta_str = info.get("eta_str", "--:--") if info else ""
-                                mode_str = info.get("mode", "single") if info else ""
-                                pct = (read * 100.0 / tot) if tot else 0.0
-                                dl_header.update(f"⬇ [{n}/{total}] {r.title[:45]} ({r.platform}) · {pct:.1f}%")
+                                dl_header.update(f"⬇ [{t['id']}/{len(self.download_tasks)}] {t['title'][:40]} ({t['platform']}) · {pct:.1f}%{q_hint}")
                                 dl_speed.update(f"⚡ Speed: {speed_str}")
-                                dl_transferred.update(f"📦 {human(read)} / {human(tot)} ({pct:.1f}%)")
+                                dl_transferred.update(f"📦 {trans_str} ({pct:.1f}%)")
                                 dl_eta.update(f"⏳ ETA: {eta_str}")
                                 dl_mode.update(f"🧵 {mode_str}")
                             else:
                                 clean_m = re.sub(r"^[\[\d\w\s]+\]\s*", "", str(msg or ""))
-                                dl_header.update(f"⬇ [{n}/{total}] {r.title[:45]} ({r.platform})")
+                                dl_header.update(f"⬇ [{t['id']}/{len(self.download_tasks)}] {t['title'][:40]} ({t['platform']}){q_hint}")
                                 dl_speed.update(f"⚡ Status: {clean_m[:25]}")
                         except Exception:
                             pass
@@ -622,31 +885,37 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
 
                 try:
                     path = download(r, self.outdir, on_progress=prog)
-                    ok += 1
+                    task["status"] = "completed"
+                    task["dest"] = path
+                    task["percent"] = 100.0
+                    size_str = human(os.path.getsize(path)) if os.path.exists(path) else ""
+                    task["transferred_str"] = size_str
                     self.downloading_titles.discard(r.title)
                     self.completed_titles.add(r.title)
                     self.call_from_thread(self._redraw)
 
-                    size_str = human(os.path.getsize(path)) if os.path.exists(path) else ""
                     self.call_from_thread(
                         self.notify,
                         f"✔ {r.title} ({size_str})",
-                        title=f"Saved [{n}/{total}]",
+                        title=f"Saved [{task['id']}/{len(self.download_tasks)}]",
                         severity="information",
                     )
 
-                    def update_done(n=n, r=r, path=path, size_str=size_str):
-                        dl_header.update(f"✔ [{n}/{total}] {r.title[:45]} — COMPLETED")
+                    def update_done(t=task, sz=size_str, p=path):
+                        q_cnt = len(self.download_queue)
+                        q_hint = f" · ({q_cnt} queued)" if q_cnt else ""
+                        dl_header.update(f"✔ [{t['id']}/{len(self.download_tasks)}] {t['title'][:40]} — COMPLETED{q_hint}")
                         dl_progress.update(total=100, progress=100)
                         dl_speed.update("⚡ Speed: Complete")
-                        dl_transferred.update(f"📦 Total: {size_str}")
+                        dl_transferred.update(f"📦 Total: {sz}")
                         dl_eta.update("⏳ Finished")
                         dl_mode.update("✔ Verified")
-                        dl_dest.update(f"📂 Saved: {path}")
+                        dl_dest.update(f"📂 Saved: {p} (press 'l' for all downloads)")
                     self.call_from_thread(update_done)
 
                 except Exception as e:
-                    fail += 1
+                    task["status"] = "failed"
+                    task["error"] = str(e)
                     self.downloading_titles.discard(r.title)
                     self.failed_titles.add(r.title)
                     self.call_from_thread(self._redraw)
@@ -659,13 +928,18 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                         severity="error",
                     )
 
-                    def update_err(n=n, r=r, err_msg=str(e)):
-                        dl_header.update(f"✖ [{n}/{total}] {r.title[:45]} — FAILED")
+                    def update_err(t=task, err_m=str(e)):
+                        q_cnt = len(self.download_queue)
+                        q_hint = f" · ({q_cnt} queued)" if q_cnt else ""
+                        dl_header.update(f"✖ [{t['id']}/{len(self.download_tasks)}] {t['title'][:40]} — FAILED{q_hint}")
                         dl_speed.update("✖ Error")
-                        dl_dest.update(f"Error: {err_msg}")
+                        dl_dest.update(f"Error: {err_m} (press 'l' for all downloads)")
                     self.call_from_thread(update_err)
 
-            summary = f"✔ {ok}/{total} downloaded to {self.outdir}" + (f" · {fail} failed" if fail else "")
-            self.call_from_thread(self._set_status, summary)
+            total_done = sum(1 for t in self.download_tasks if t["status"] in ("completed", "exists"))
+            total_failed = sum(1 for t in self.download_tasks if t["status"] == "failed")
+            total_all = len(self.download_tasks)
+            summary = f"✔ {total_done}/{total_all} downloaded to {self.outdir}" + (f" · {total_failed} failed" if total_failed else "")
+            self.call_from_thread(self._set_status, summary + " — " + self._hint())
 
     RomApp(platform_key, query, outdir, force).run()

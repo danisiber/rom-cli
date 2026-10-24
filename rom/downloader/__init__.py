@@ -92,9 +92,15 @@ def download(result, outdir, on_progress=None):
     if on_progress:
         on_progress(0, 0, f"searching source link: {result.title[:45]}…")
     if result.meta.get("search_title"):
-        found = DLP.search(result.meta["search_title"], result.meta.get("pk"))
+        pk = result.meta.get("pk")
+        stitle = result.meta["search_title"]
+        if result.source == "dlpsgame":
+            found = DLP.search(stitle, pk)
+        else:
+            from rom.catalog import search as cat_search
+            found = cat_search(stitle, pk)
         if not found:
-            raise RuntimeError(f"could not find '{result.title}' on dlpsgame")
+            raise RuntimeError(f"could not find '{result.title}' on {result.source}")
         result = found[0]
     src = SOURCES[result.source]
     if on_progress:

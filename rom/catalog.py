@@ -115,18 +115,19 @@ def load_popular(force=False):
     global POPULAR, POPULAR_NORM
     if POPULAR is not None and not force:
         return POPULAR
+    data = {}
     if not force and os.path.exists(POPULAR_FILE):
         try:
             with open(POPULAR_FILE, encoding="utf-8") as _f:
                 d = json.load(_f)
             if time.time() - d.get("fetched_at", 0) < POPULAR_TTL and d.get("data"):
-                POPULAR = d["data"]
-                POPULAR_NORM = None
-                return POPULAR
+                data = d["data"]
         except Exception:
             pass
-    data = {}
+    dirty = False
     for pk, page in WIKI_LISTS.items():
+        if pk in data and data[pk]:
+            continue
         try:
             titles = _parse_wiki(_wiki_raw(page))
         except Exception:
@@ -139,14 +140,16 @@ def load_popular(force=False):
                 ranked.append(t)
         if ranked:
             data[pk] = ranked
-    try:
-        os.makedirs(CACHE_DIR, exist_ok=True)
-        tmp = POPULAR_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"fetched_at": time.time(), "data": data}, f)
-        os.replace(tmp, POPULAR_FILE)
-    except Exception:
-        pass
+            dirty = True
+    if dirty or (not os.path.exists(POPULAR_FILE) and data):
+        try:
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            tmp = POPULAR_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"fetched_at": time.time(), "data": data}, f)
+            os.replace(tmp, POPULAR_FILE)
+        except Exception:
+            pass
     POPULAR = data
     POPULAR_NORM = None
     return data
@@ -315,8 +318,9 @@ def browse_items(platform_key):
         titles = (POPULAR or {}).get(pk) or []
         if not titles:
             raise RuntimeError(f"{PLATFORM_LABELS.get(pk, pk)}: no listing — use the search")
-        items = [Result("dlpsgame", t, PLATFORM_LABELS.get(pk, pk), "",
-                        meta={"ext": "pkg", "pk": pk, "pop": i, "search_title": t})
+        ext = "pkg" if src_name == "dlpsgame" else "zip"
+        items = [Result(src_name, t, PLATFORM_LABELS.get(pk, pk), "",
+                        meta={"ext": ext, "pk": pk, "pop": i, "search_title": t})
                  for i, t in enumerate(titles)]
         return items
     load_popular()

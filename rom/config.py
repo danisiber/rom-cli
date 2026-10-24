@@ -146,6 +146,9 @@ WIKI_LISTS = {
     "wii": "List_of_best-selling_Wii_video_games",
     "genesis": "List_of_best-selling_Sega_Genesis_games",
     "xbox": "List_of_best-selling_Xbox_video_games",
+    "gbc": "List_of_best-selling_Game_Boy_video_games",
+    "dreamcast": "List_of_best-selling_Dreamcast_games",
+    "saturn": "List_of_best-selling_Sega_Saturn_games",
 }
 
 TTY = sys.stdout.isatty()
