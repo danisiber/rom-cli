@@ -102,13 +102,15 @@ class CoolRom(BaseProvider):
 
             pk = SYSTEM_MAP.get(sys_id, sys_id)
             plat_label = PLATFORM_LABELS.get(pk, m.group("plat").strip())
+            clean_title_fn = re.sub(r'[\/\\:*?"<>|]', "", raw_title)
+            thumb = f"{self.base}/screenshots/{sys_id}/{urllib.parse.quote(clean_title_fn)}.jpg"
 
             out.append(Result(
                 self.name,
                 raw_title,
                 plat_label,
                 self.base + path,
-                meta={"pk": pk, "sys": sys_id, "id": m.group("id"), "ext": "7z"}
+                meta={"pk": pk, "sys": sys_id, "id": m.group("id"), "ext": "7z", "thumb": thumb}
             ))
         return out
 

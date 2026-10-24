@@ -40,8 +40,9 @@ class RomsGames(BaseProvider):
             title = clean(item.get("name") or "")
             if not title:
                 continue
+            thumb = item.get("thumbnailImageURL") or ""
             out.append(Result(self.name, title, LABELS.get(prefix, prefix.replace("-", " ").title()),
-                              self.base + href, meta={"ext": "zip"}))
+                              self.base + href, meta={"ext": "zip", "thumb": thumb}))
         return out
 
     def resolve(self, result):

@@ -4,10 +4,12 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 
 from rom.catalog import browse_items, rank, search
 from rom.config import OUT_DIR, PLATFORM_LABELS, get_out_dir, set_out_dir
 from rom.downloader import check_already_downloaded, download
+from rom.thumb import get_thumb_urls, load_thumb_bytes, open_in_browser, render_thumb
 from rom.utils import human, log_error
 
 
@@ -328,7 +330,43 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
         TITLE = "rom"
         CSS = """
         Input { dock: top; }
-        DataTable { height: 1fr; }
+        #main-view {
+            height: 1fr;
+            layout: horizontal;
+        }
+        #games-table {
+            width: 1fr;
+            height: 100%;
+        }
+        #preview-pane {
+            width: 32;
+            height: 100%;
+            background: $surface;
+            border-left: round $primary;
+            padding: 0 1;
+            overflow-y: auto;
+        }
+        #preview-header {
+            text-style: bold;
+            color: $accent;
+            text-align: center;
+            height: 1;
+            margin-bottom: 1;
+        }
+        #preview-art {
+            height: auto;
+            text-align: center;
+            margin-bottom: 1;
+        }
+        #preview-info {
+            height: auto;
+            text-overflow: ellipsis;
+        }
+        #preview-hint {
+            text-style: dim italic;
+            text-align: center;
+            margin-top: 1;
+        }
         #download-box {
             display: none;
             dock: bottom;
@@ -390,6 +428,8 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             ("space", "toggle", "Select"),
             Binding("escape", "back_to_main", "Main (★)"),
             Binding("r", "back_to_main", "Reset (★)", show=False),
+            Binding("t", "toggle_preview", "Preview (t)"),
+            Binding("v", "view_image", "Open Image (v)", show=False),
             Binding("slash", "focus_search", "Search (/)", show=False),
             ("p", "platform", "Platform"),
             ("o", "set_outdir", "Folder"),
@@ -414,6 +454,9 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             self.force = force
             self.browse_items = None
             self._browse_cache = {}
+            self._thumb_cache = {}
+            self._current_thumb_url = None
+            self._current_preview_token = 0
             self.page = 0
             self._req_token = 0
             self.download_tasks = []
@@ -424,7 +467,13 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
         def compose(self) -> ComposeResult:
             yield Header(show_clock=True)
             yield Input(placeholder="Type game name & press Enter… (Esc / empty Enter returns to ★ main list, p platform)", id="main-search")
-            yield DataTable(cursor_type="row")
+            with Horizontal(id="main-view"):
+                yield DataTable(cursor_type="row", id="games-table")
+                with Vertical(id="preview-pane"):
+                    yield Static("Cover Art", id="preview-header")
+                    yield Static("", id="preview-art")
+                    yield Static("", id="preview-info")
+                    yield Static("[dim]v[/dim] open image · [dim]t[/dim] toggle", id="preview-hint")
             with Vertical(id="download-box"):
                 yield Static("", id="dl-header")
                 yield ProgressBar(id="dl-progress", show_percentage=True, show_eta=True)
@@ -539,6 +588,10 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             for i, r in enumerate(results[:200]):
                 table.add_row(*self._cells(i, r), key=str(i))
             table.focus()
+            if results:
+                self._update_preview(results[0])
+            else:
+                self._clear_preview()
             msg = f"{len(results)} results" if results else "nothing found"
             self._set_status(f"{msg} — {self._hint()}")
 
@@ -582,6 +635,10 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             for i, r in enumerate(chunk):
                 table.add_row(*self._cells(i, r), key=str(i))
             table.focus()
+            if chunk:
+                self._update_preview(chunk[0])
+            else:
+                self._clear_preview()
             plat = PLATFORM_LABELS.get(self.pk, self.pk or "todas")
             self._set_status(f"{plat} · {len(items)} items · page {self.page + 1}/{pages}"
                              " — n/b page · space mark · d download · q quit")
@@ -690,6 +747,100 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
         def action_downloads_view(self):
             self.push_screen(DownloadsScreen(lambda: self.download_tasks))
 
+        def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted):
+            idx = event.cursor_row
+            if 0 <= idx < len(self.results):
+                self._update_preview(self.results[idx])
+
+        def _update_preview(self, r):
+            self._current_preview_token += 1
+            token = self._current_preview_token
+
+            # Update info text
+            star = "★ " if r.meta.get("pop") is not None else ""
+            info = (
+                f"[bold accent]{star}{r.title[:45]}[/]\n"
+                f"[dim]Platform:[/] [green]{r.platform}[/]\n"
+                f"[dim]Size:[/] [yellow]{r.size or '?'}[/] · [dim]Type:[/] {r.kind or '-'}\n"
+                f"[dim]Source:[/] [cyan]{r.source}[/]"
+            )
+            try:
+                self.query_one("#preview-info", Static).update(info)
+            except Exception:
+                pass
+
+            # Update cover art from cache if available
+            if r.title in self._thumb_cache:
+                art, url = self._thumb_cache[r.title]
+                self._current_thumb_url = url
+                try:
+                    self.query_one("#preview-art", Static).update(art)
+                except Exception:
+                    pass
+                return
+
+            # Placeholder while loading
+            try:
+                self.query_one("#preview-art", Static).update("⠋ loading cover…")
+            except Exception:
+                pass
+
+            threading.Thread(target=self._thumb_bg, args=(r, token), daemon=True).start()
+
+        def _thumb_bg(self, r, token):
+            urls = get_thumb_urls(r)
+            data, url = load_thumb_bytes(urls)
+            art = render_thumb(data, max_w=28, max_h=22)
+            if not art:
+                plat = r.platform or "ROM"
+                art = (
+                    f"┌──────────────────────────┐\n"
+                    f"│       ★ {plat:^8} ★       │\n"
+                    f"│                          │\n"
+                    f"│     [ No Cover Art ]     │\n"
+                    f"│                          │\n"
+                    f"│   press 'v' to search    │\n"
+                    f"└──────────────────────────┘"
+                )
+            if token == self._current_preview_token:
+                self._thumb_cache[r.title] = (art, url)
+                self._current_thumb_url = url
+                self.call_from_thread(self._set_art_ui, art, token)
+
+        def _set_art_ui(self, art, token):
+            if token == self._current_preview_token:
+                try:
+                    self.query_one("#preview-art", Static).update(art)
+                except Exception:
+                    pass
+
+        def _clear_preview(self):
+            try:
+                self.query_one("#preview-info", Static).update("")
+                self.query_one("#preview-art", Static).update("")
+            except Exception:
+                pass
+
+        def action_view_image(self):
+            if self._current_thumb_url:
+                open_in_browser(self._current_thumb_url)
+                self.notify(f"Opened cover image in browser:\n{self._current_thumb_url}", title="Cover Image")
+            else:
+                table = self.query_one(DataTable)
+                if table.cursor_row is not None and 0 <= table.cursor_row < len(self.results):
+                    r = self.results[table.cursor_row]
+                    q = urllib.parse.quote(f"{r.title} {r.platform} cover box art")
+                    search_url = f"https://www.google.com/search?tbm=isch&q={q}"
+                    open_in_browser(search_url)
+                    self.notify(f"Searching images for:\n{r.title}", title="Google Images")
+
+        def action_toggle_preview(self):
+            try:
+                pane = self.query_one("#preview-pane")
+                pane.display = not pane.display
+            except Exception:
+                pass
+
         def action_back_to_main(self):
             try:
                 inp = self.query_one("#main-search", Input)
@@ -719,6 +870,8 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                     ("Download current", "cur"),
                     ("View all downloads (Downloads Manager)", "dl_view"),
                     ("Return to main list (★)", "main"),
+                    ("Toggle cover preview panel", "toggle_prev"),
+                    ("Open cover image in browser", "open_img"),
                     ("Configure download folder", "outdir"),
                     ("Browse this platform", "browse"),
                     ("Switch platform", "plat"),
@@ -739,6 +892,10 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                 self.action_downloads_view()
             elif choice == "main":
                 self.action_back_to_main()
+            elif choice == "toggle_prev":
+                self.action_toggle_preview()
+            elif choice == "open_img":
+                self.action_view_image()
             elif choice == "outdir":
                 self.action_set_outdir()
             elif choice == "browse":

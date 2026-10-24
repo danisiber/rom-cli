@@ -25,9 +25,9 @@ if not exist "%VENV%\Scripts\python.exe" (
     %PY% -m venv "%VENV%"
 )
 
-echo installing textual
+echo installing textual and pillow
 "%VENV%\Scripts\python.exe" -m pip install -q --upgrade pip >nul 2>&1
-"%VENV%\Scripts\python.exe" -m pip install -q textual
+"%VENV%\Scripts\python.exe" -m pip install -q textual pillow
 
 :: ── Create wrapper scripts ─────────────────────────────────────────────────
 echo @echo off> "%DEST%\rom.cmd"

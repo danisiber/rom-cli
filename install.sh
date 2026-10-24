@@ -40,9 +40,9 @@ if [ ! -x "$(venv_py)" ]; then
 fi
 VENV_PY="$(venv_py)"
 
-echo "installing textual"
+echo "installing textual and pillow"
 "$VENV_PY" -m pip install -q --upgrade pip >/dev/null 2>&1 || true
-"$VENV_PY" -m pip install -q textual
+"$VENV_PY" -m pip install -q textual pillow
 
 # ── create wrapper scripts ──────────────────────────────────────────────
 write_wrapper() {
