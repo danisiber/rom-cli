@@ -47,6 +47,22 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                 yield OptionList(*[Option(o[0], id=o[1]) for o in self.options], id="opts-list")
                 yield Static("↑↓ move · Enter select · esc close", id="opts-hint")
 
+        def on_mount(self):
+            try:
+                self.query_one("#opts-list", OptionList).focus()
+            except Exception:
+                pass
+
+        def on_key(self, event):
+            if event.key in ("escape", "q", "ctrl+b"):
+                event.stop()
+                event.prevent_default()
+                self.dismiss(None)
+
+        def on_click(self, event):
+            if event.target == self:
+                self.dismiss(None)
+
         def on_option_list_option_selected(self, event):
             event.stop()
             self.dismiss(event.option_id)
@@ -113,6 +129,11 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                 self.dismiss(self.filtered[0][1])
 
         def on_key(self, event):
+            if event.key in ("escape", "q", "ctrl+b"):
+                event.stop()
+                event.prevent_default()
+                self.dismiss(None)
+                return
             if event.key == "down":
                 inp = self.query_one("#plat-search", Input)
                 opt_list = self.query_one("#plat-list", OptionList)
@@ -173,6 +194,12 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             if val:
                 self.dismiss(val)
             else:
+                self.dismiss(None)
+
+        def on_key(self, event):
+            if event.key in ("escape", "ctrl+b"):
+                event.stop()
+                event.prevent_default()
                 self.dismiss(None)
 
         def action_cancel(self):
@@ -322,6 +349,12 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
                     t = tasks[table.cursor_row]
                     dest = t.get("dest") or t.get("error") or "In queue"
                     self.notify(f"{t['title']}\nStatus: {t['status'].upper()}\nInfo: {dest}", title=f"Task #{t['id']}")
+
+        def on_key(self, event):
+            if event.key in ("escape", "q", "l", "ctrl+l", "ctrl+j"):
+                event.stop()
+                event.prevent_default()
+                self.dismiss(None)
 
         def action_cancel(self):
             self.dismiss(None)
@@ -525,6 +558,10 @@ def run_tui(platform_key="", query="", outdir=None, force=False):
             self._busy = msg
 
         def on_key(self, event):
+            if isinstance(self.screen, ModalScreen):
+                # Let active modal dialog (Options, Platforms, etc.) handle its own keys
+                return
+
             if event.key == "escape":
                 self.action_back_to_main()
                 event.prevent_default()
