@@ -29,17 +29,22 @@ echo installing textual
 "%VENV%\Scripts\python.exe" -m pip install -q --upgrade pip >nul 2>&1
 "%VENV%\Scripts\python.exe" -m pip install -q textual
 
-:: ── Create rom.cmd wrapper ─────────────────────────────────────────────
+:: ── Create wrapper scripts ─────────────────────────────────────────────────
 echo @echo off> "%DEST%\rom.cmd"
 echo "%VENV%\Scripts\python.exe" "%SRC%\rom" %%*>> "%DEST%\rom.cmd"
 
-echo.
-echo installed: %DEST%\rom.cmd  (venv: %VENV%)
+(
+echo #!/usr/bin/env bash
+echo exec "%VENV%\Scripts\python.exe" "%SRC%\rom" "$@"
+) > "%DEST%\rom"
 
-:: ── Check PATH ─────────────────────────────────────────────────────────
-echo %PATH% | findstr /i /c:"%DEST%" >nul 2>&1
-if errorlevel 1 (
-    echo warning: add %DEST% to your PATH
-    echo   run:  setx PATH "%DEST%;%%PATH%%"
-)
+echo.
+echo installed: %DEST%\rom.cmd  (for CMD / PowerShell)
+echo installed: %DEST%\rom      (for Git Bash / MSYS2)
+echo venv:      %VENV%
+
+:: ── Safe PATH Registration ─────────────────────────────────────────────────
+powershell -NoProfile -Command "$d = '%DEST%'; $p = [Environment]::GetEnvironmentVariable('Path', 'User'); if ($p -notlike ('*' + $d + '*')) { [Environment]::SetEnvironmentVariable('Path', ($d + ';' + $p), 'User'); Write-Host '  added ' + $d + ' to your User PATH' }" >nul 2>&1
+
+echo.
 echo test: rom -l    ^|    rom --index

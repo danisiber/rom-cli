@@ -5,7 +5,7 @@ import os
 import sys
 
 from rom.catalog import browse_items, load_popular, rank, search
-from rom.config import INDEX_FILE, LOG_FILE, OUT_DIR, PLATFORM_LABELS, PLATFORMS
+from rom.config import INDEX_FILE, LOG_FILE, OUT_DIR, PLATFORM_LABELS, PLATFORMS, get_out_dir, set_out_dir
 from rom.downloader import run_cli_download
 from rom.providers import DLA, DLP, SOURCES
 from rom.ui import _has_textual, run_tui, select_menu, show
@@ -25,9 +25,24 @@ def main():
     ap.add_argument("--refresh", action="store_true", help="rebuild the catalog index")
     ap.add_argument("--index", action="store_true", help="download/print the index and exit")
     ap.add_argument("-n", "--number", type=int, default=15, help="how many results to show")
-    ap.add_argument("-o", "--out", default=OUT_DIR, help="destination folder")
+    ap.add_argument("-o", "--out", default=get_out_dir(), help="destination folder")
+    ap.add_argument("--set-dir", metavar="PATH", help="set default download directory and exit")
+    ap.add_argument("--show-dir", action="store_true", help="show current default download directory and exit")
     ap.add_argument("--debug", action="store_true", help="show verbose error tracebacks and log to file")
     args = ap.parse_args()
+
+    if args.set_dir:
+        new_dir = set_out_dir(args.set_dir)
+        try:
+            os.makedirs(new_dir, exist_ok=True)
+        except OSError:
+            pass
+        write(f"  ✔ default download directory set to: {new_dir}")
+        return 0
+
+    if args.show_dir:
+        write(f"  default download directory: {get_out_dir()}")
+        return 0
 
     if args.platforms:
         write("  platforms: " + ", ".join(sorted(PLATFORMS)))

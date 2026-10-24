@@ -1,5 +1,6 @@
 """Configuration constants, platform mappings, and paths for rom."""
 
+import json
 import os
 import re
 import sys
@@ -9,8 +10,51 @@ UA = (
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 
-OUT_DIR = os.path.expanduser(os.environ.get("ROM_DIR") or "~/Downloads/roms")
 CACHE_DIR = os.path.expanduser(os.environ.get("XDG_CACHE_HOME") or "~/.cache") + "/rom-cli"
+CONFIG_FILE = os.path.join(CACHE_DIR, "config.json")
+
+
+def load_config():
+    """Load persistent configuration dictionary."""
+    if os.path.isfile(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def save_config(cfg):
+    """Save persistent configuration dictionary."""
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception:
+        pass
+
+
+def get_out_dir():
+    """Retrieve the configured download directory."""
+    if os.environ.get("ROM_DIR"):
+        return os.path.expanduser(os.environ["ROM_DIR"])
+    cfg = load_config()
+    if cfg.get("download_dir"):
+        return os.path.expanduser(cfg["download_dir"])
+    return os.path.expanduser("~/Downloads/roms")
+
+
+def set_out_dir(path):
+    """Save and persist a new default download directory."""
+    clean = os.path.abspath(os.path.expanduser(path.strip()))
+    cfg = load_config()
+    cfg["download_dir"] = clean
+    save_config(cfg)
+    return clean
+
+
+OUT_DIR = get_out_dir()
 LOG_FILE = os.path.join(CACHE_DIR, "rom.log")
 INDEX_FILE = os.path.join(CACHE_DIR, "dlarchive.json")
 INDEX_TTL = 12 * 3600

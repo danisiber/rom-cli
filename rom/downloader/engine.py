@@ -89,6 +89,8 @@ def stream(url, referer, on_progress, dest):
     stop_event = threading.Event()
 
     # Step 1: Probe server capabilities
+    if on_progress:
+        on_progress(0, 0, "connecting to download server…")
     can_chunk, total_size = probe_url(url, referer)
 
     # Threshold: files < 15 MB don't benefit much from multi-threading overhead
@@ -122,6 +124,9 @@ def stream(url, referer, on_progress, dest):
         start = i * chunk_size
         end = (i + 1) * chunk_size - 1 if i < num_workers - 1 else total_size - 1
         ranges.append((start, end))
+
+    if on_progress:
+        on_progress(0, total_size, f"starting {num_workers} parallel download chunks…")
 
     progress = DownloadProgress(total_size, on_progress, mode=f"{num_workers} chunks")
 
